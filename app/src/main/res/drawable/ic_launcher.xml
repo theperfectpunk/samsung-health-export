@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#0381FE"
+        android:pathData="M0,0h108v108h-108z" />
+    <!-- Heart / Runner Icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,74 C54,74 34,60 34,44 C34,36 40,30 48,30 C52,30 54,34 54,34 C54,34 56,30 60,30 C68,30 74,36 74,44 C74,60 54,74 54,74 Z" />
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M48,50 L52,55 L60,45"
+        android:strokeWidth="3"
+        android:strokeColor="#00E676" />
+</vector>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Samsung Health Exporter</string>
+    <string name="health_connect_rationale">This app reads workout sessions, GPS routes, heart rate, speed, cadence, and calories recorded by Samsung Health so you can export granular time-series and summary CSV files.</string>
+</resources>

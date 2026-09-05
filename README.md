@@ -180,6 +180,14 @@ health-export/
 
 ---
 
+## Download APK & Releases
+
+Pre-built APKs are automatically compiled and published to GitHub Releases by our CI/CD pipeline:
+
+👉 **[Download Latest APK from Releases](https://github.com/theperfectpunk/samsung-health-export/releases)**
+
+---
+
 ## Building from Source
 
 ### Prerequisites

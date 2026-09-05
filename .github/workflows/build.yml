@@ -1,20 +1,31 @@
-name: Build Android App
+name: Build & Release Android App
 
 on:
   push:
     branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag name (optional, e.g. v1.0.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    name: Build & Test APK
+    name: Build, Test & Release APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -35,11 +46,17 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      - name: Prepare Release Assets
+        run: |
+          mkdir -p release-assets
+          cp app/build/outputs/apk/debug/*.apk release-assets/SamsungHealthExporter.apk
+          ls -lh release-assets/
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: samsung-health-exporter-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: release-assets/SamsungHealthExporter.apk
           retention-days: 14
 
       - name: Upload Test Reports
@@ -49,3 +66,33 @@ jobs:
           name: junit-test-reports
           path: app/build/reports/tests/testDebugUnitTest/
           retention-days: 7
+
+      - name: Publish GitHub Release
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+            TITLE="Samsung Health Exporter $TAG"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            TITLE="Samsung Health Exporter $TAG"
+          else
+            TAG="v1.0.${{ github.run_number }}"
+            TITLE="Samsung Health Exporter v1.0.${{ github.run_number }}"
+          fi
+
+          echo "Tag: $TAG"
+          echo "Title: $TITLE"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating assets..."
+            gh release upload "$TAG" release-assets/SamsungHealthExporter.apk --clobber
+          else
+            echo "Creating new release $TAG..."
+            gh release create "$TAG" release-assets/SamsungHealthExporter.apk \
+              --title "$TITLE" \
+              --generate-notes \
+              --latest
+          fi

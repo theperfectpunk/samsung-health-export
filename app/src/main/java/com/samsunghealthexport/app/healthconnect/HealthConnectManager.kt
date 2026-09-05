@@ -1,6 +1,7 @@
 package com.samsunghealthexport.app.healthconnect
 
 import android.content.Context
+import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.DistanceRecord
@@ -29,6 +30,10 @@ import java.util.TreeMap
 
 class HealthConnectManager(private val context: Context) {
 
+    companion object {
+        private const val TAG = "HealthConnectManager"
+    }
+
     private val healthConnectClient by lazy {
         if (isAvailable()) HealthConnectClient.getOrCreate(context) else null
     }
@@ -37,38 +42,105 @@ class HealthConnectManager(private val context: Context) {
         return HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
     }
 
-    suspend fun hasAllPermissions(): Boolean {
-        val client = healthConnectClient ?: return false
-        val granted = client.permissionController.getGrantedPermissions()
-        // Check if required permissions are subset
-        return granted.containsAll(HealthConnectPermissions.PERMISSIONS.filter { !it.contains("ROUTES") })
+    suspend fun getGrantedPermissions(): Set<String> {
+        val client = healthConnectClient ?: return emptySet()
+        return try {
+            client.permissionController.getGrantedPermissions()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking granted permissions", e)
+            emptySet()
+        }
+    }
+
+    /**
+     * Checks if the minimum required permission to read exercise sessions is granted.
+     */
+    suspend fun hasRequiredPermissions(): Boolean {
+        val granted = getGrantedPermissions()
+        return granted.contains(HealthConnectPermissions.REQUIRED_EXERCISE_PERMISSION)
+    }
+
+    /**
+     * Checks if historical data access permission (reading older than 30 days) is granted.
+     */
+    suspend fun hasHistoryPermission(): Boolean {
+        val granted = getGrantedPermissions()
+        return granted.contains(HealthConnectPermissions.READ_HEALTH_DATA_HISTORY)
     }
 
     /**
      * Reads all exercise sessions recorded within the specified time range.
-     * Extracts full GPS routes, heart rate samples, speed samples, steps, and energy.
+     * Uses pagination to retrieve all records and handles historical limits safely.
      */
     suspend fun fetchWorkouts(
-        startTime: Instant = Instant.now().minus(Duration.ofDays(30)),
+        requestedStartTime: Instant = Instant.now().minus(Duration.ofDays(365)),
         endTime: Instant = Instant.now()
     ): List<WorkoutSession> = withContext(Dispatchers.IO) {
-        val client = healthConnectClient ?: return@withContext emptyList()
+        val client = healthConnectClient ?: run {
+            Log.w(TAG, "HealthConnectClient is null")
+            return@withContext emptyList()
+        }
+
+        if (!hasRequiredPermissions()) {
+            Log.w(TAG, "Missing required READ_EXERCISE permission")
+            return@withContext emptyList()
+        }
+
+        // Safety check: if historical permission is not granted, clamp to 29 days to prevent SecurityException
+        val hasHistory = hasHistoryPermission()
+        val earliestAllowed = Instant.now().minus(Duration.ofDays(29))
+        val effectiveStartTime = if (!hasHistory && requestedStartTime.isBefore(earliestAllowed)) {
+            Log.i(TAG, "Clamping query to 29 days because READ_HEALTH_DATA_HISTORY is not granted")
+            earliestAllowed
+        } else {
+            requestedStartTime
+        }
+
+        val allSessionRecords = mutableListOf<ExerciseSessionRecord>()
+        var pageToken: String? = null
 
         try {
-            val sessionsResponse = client.readRecords(
-                ReadRecordsRequest(
+            do {
+                val request = ReadRecordsRequest(
                     recordType = ExerciseSessionRecord::class,
-                    timeRangeFilter = TimeRangeFilter.between(startTime, endTime)
+                    timeRangeFilter = TimeRangeFilter.between(effectiveStartTime, endTime),
+                    pageToken = pageToken,
+                    pageSize = 500
                 )
-            )
+                val response = client.readRecords(request)
+                allSessionRecords.addAll(response.records)
+                pageToken = response.pageToken
+            } while (pageToken != null)
 
-            sessionsResponse.records.map { sessionRecord ->
-                fetchDetailedWorkout(client, sessionRecord)
-            }.sortedByDescending { it.startTime }
+            Log.i(TAG, "Found ${allSessionRecords.size} ExerciseSessionRecords in Health Connect")
         } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
+            Log.e(TAG, "Error querying ExerciseSessionRecord with start=$effectiveStartTime", e)
+            // If it failed due to date range, attempt fallback to last 28 days
+            if (effectiveStartTime.isBefore(earliestAllowed)) {
+                try {
+                    val fallbackRequest = ReadRecordsRequest(
+                        recordType = ExerciseSessionRecord::class,
+                        timeRangeFilter = TimeRangeFilter.between(earliestAllowed, endTime),
+                        pageSize = 500
+                    )
+                    val fallbackResponse = client.readRecords(fallbackRequest)
+                    allSessionRecords.addAll(fallbackResponse.records)
+                    Log.i(TAG, "Fallback query retrieved ${allSessionRecords.size} records")
+                } catch (fallbackEx: Exception) {
+                    Log.e(TAG, "Fallback query also failed", fallbackEx)
+                }
+            }
         }
+
+        // Fetch details for each session with per-record fault tolerance
+        allSessionRecords.mapNotNull { sessionRecord ->
+            try {
+                fetchDetailedWorkout(client, sessionRecord)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error fetching details for session ${sessionRecord.metadata.id}, creating basic session", e)
+                createBasicWorkoutSession(sessionRecord)
+            }
+        }.sortedByDescending { it.startTime }
     }
 
     private suspend fun fetchDetailedWorkout(
@@ -77,7 +149,7 @@ class HealthConnectManager(private val context: Context) {
     ): WorkoutSession {
         val timeFilter = TimeRangeFilter.between(session.startTime, session.endTime)
 
-        // Read Heart Rate series
+        // Read Heart Rate series safely
         val hrRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -89,7 +161,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Speed series
+        // Read Speed series safely
         val speedRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -101,7 +173,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Distance records
+        // Read Distance records safely
         val distanceRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -113,7 +185,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Steps records
+        // Read Steps records safely
         val stepsRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -125,7 +197,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Calories records
+        // Read Calories records safely
         val caloriesRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -137,7 +209,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Elevation Gained
+        // Read Elevation Gained safely
         val elevationRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -149,7 +221,7 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Read Power records
+        // Read Power records safely
         val powerRecords = try {
             client.readRecords(
                 ReadRecordsRequest(
@@ -161,11 +233,15 @@ class HealthConnectManager(private val context: Context) {
             emptyList()
         }
 
-        // Extract GPS Route locations
+        // Extract GPS Route locations safely
         val routeLocations = mutableListOf<ExerciseRoute.Location>()
-        val routeResult = session.exerciseRouteResult
-        if (routeResult is ExerciseRouteResult.Data) {
-            routeLocations.addAll(routeResult.exerciseRoute.route)
+        try {
+            val routeResult = session.exerciseRouteResult
+            if (routeResult is ExerciseRouteResult.Data) {
+                routeLocations.addAll(routeResult.exerciseRoute.route)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to read exercise route result for session ${session.metadata.id}: ${e.message}")
         }
 
         val geoPoints = routeLocations.map { loc ->
@@ -229,7 +305,6 @@ class HealthConnectManager(private val context: Context) {
         val liveDataPoints = timelineMap.values.map { b ->
             val elapsed = (b.time.epochSecond - session.startTime.epochSecond).coerceAtLeast(0)
 
-            // Compute distance delta if GPS is present
             if (b.latitude != null && b.longitude != null) {
                 val currentPoint = GeoPoint(b.latitude!!, b.longitude!!)
                 if (lastLocation != null) {
@@ -245,7 +320,7 @@ class HealthConnectManager(private val context: Context) {
         }
 
         val exerciseType = ExerciseType.fromHealthConnectType(session.exerciseType)
-        val title = session.title ?: "${exerciseType.displayName} Session"
+        val title = session.title?.takeIf { it.isNotBlank() } ?: "${exerciseType.displayName} Session"
 
         val summary = WorkoutSummary(
             totalDistanceMeters = if (totalDistanceMeters > 0) totalDistanceMeters else runningDistance,
@@ -269,6 +344,23 @@ class HealthConnectManager(private val context: Context) {
         )
     }
 
+    private fun createBasicWorkoutSession(session: ExerciseSessionRecord): WorkoutSession {
+        val exerciseType = ExerciseType.fromHealthConnectType(session.exerciseType)
+        val duration = (session.endTime.epochSecond - session.startTime.epochSecond).coerceAtLeast(0)
+        return WorkoutSession(
+            id = session.metadata.id,
+            source = WorkoutSource.SAMSUNG_HEALTH_CONNECT,
+            exerciseType = exerciseType,
+            title = session.title?.takeIf { it.isNotBlank() } ?: "${exerciseType.displayName} Session",
+            startTime = session.startTime,
+            endTime = session.endTime,
+            summary = WorkoutSummary(totalDurationSeconds = duration),
+            liveDataPoints = emptyList(),
+            routePoints = emptyList(),
+            notes = session.notes
+        )
+    }
+
     private fun calculateDistanceMeters(p1: GeoPoint, p2: GeoPoint): Double {
         val lat1 = Math.toRadians(p1.latitude)
         val lon1 = Math.toRadians(p1.longitude)
@@ -282,7 +374,7 @@ class HealthConnectManager(private val context: Context) {
                 Math.cos(lat1) * Math.cos(lat2) *
                 Math.sin(dLon / 2) * Math.sin(dLon / 2)
         val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-        return 6371000.0 * c // Earth radius in meters
+        return 6371000.0 * c
     }
 
     private class MutableDataPointBuilder(val time: Instant) {

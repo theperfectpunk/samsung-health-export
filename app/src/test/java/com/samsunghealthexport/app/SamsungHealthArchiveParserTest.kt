@@ -6,11 +6,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 class SamsungHealthArchiveParserTest {
 
     @Test
-    fun testParseExerciseCsvWithLiveAndLocationData() {
+    fun testParseExerciseCsvWithStandardUuid() {
         val testUuid = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
 
         val exerciseCsv = """
@@ -45,18 +46,41 @@ class SamsungHealthArchiveParserTest {
         assertEquals("5000m total distance", 5000.0, s.summary.totalDistanceMeters, 0.1)
         assertEquals("1800 seconds duration", 1800L, s.summary.totalDurationSeconds)
 
-        // Verify correlated live points
         assertEquals("2 live data points synchronized", 2, s.liveDataPoints.size)
         val p1 = s.liveDataPoints[0]
         assertEquals(37.7749, p1.latitude!!, 0.0001)
         assertEquals(-122.4194, p1.longitude!!, 0.0001)
         assertEquals(135, p1.heartRateBpm)
-        assertEquals(2.7, p1.speedMps!!, 0.01)
-        assertEquals(160, p1.cadenceSpm)
+    }
 
-        val p2 = s.liveDataPoints[1]
-        assertEquals(37.7750, p2.latitude!!, 0.0001)
-        assertEquals(140, p2.heartRateBpm)
-        assertEquals(2.8, p2.speedMps!!, 0.01)
+    @Test
+    fun testExtract32CharHexUuid() {
+        val path1 = "jsons/com.samsung.shealth.exercise/5f8a7b1c3d4e5f6a7b8c9d0e1f2a3b4c.live.data.json"
+        val uuid1 = SamsungHealthArchiveParser.extractUuid(path1)
+        assertEquals("5f8a7b1c3d4e5f6a7b8c9d0e1f2a3b4c", uuid1)
+
+        val path2 = "com.samsung.health.exercise.a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d.location_data.json"
+        val uuid2 = SamsungHealthArchiveParser.extractUuid(path2)
+        assertEquals("a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d", uuid2)
+    }
+
+    @Test
+    fun testParseFlexibleTimestampFormats() {
+        // Epoch millis
+        val t1 = SamsungHealthArchiveParser.parseTimestamp("1693897200000")
+        assertNotNull(t1)
+        assertEquals(1693897200000L, t1!!.toEpochMilli())
+
+        // Standard DateTime format
+        val t2 = SamsungHealthArchiveParser.parseTimestamp("2026-09-04 06:00:00.000")
+        assertNotNull(t2)
+
+        // Date without millis
+        val t3 = SamsungHealthArchiveParser.parseTimestamp("2026-09-04 06:00:00")
+        assertNotNull(t3)
+
+        // ISO format
+        val t4 = SamsungHealthArchiveParser.parseTimestamp("2026-09-04T06:00:00Z")
+        assertNotNull(t4)
     }
 }

@@ -115,16 +115,16 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (state.hasPermissions) "Connected & Synchronized" else "Permissions required",
+                            text = if (state.hasRequiredPermissions) "Connected & Synchronized" else "Permissions required",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (state.hasPermissions) BrightGreen else OrangeFlame
+                            color = if (state.hasRequiredPermissions) BrightGreen else OrangeFlame
                         )
                     }
 
                     Icon(
-                        imageVector = if (state.hasPermissions) Icons.Default.CheckCircle else Icons.Default.Sync,
+                        imageVector = if (state.hasRequiredPermissions) Icons.Default.CheckCircle else Icons.Default.Sync,
                         contentDescription = null,
-                        tint = if (state.hasPermissions) BrightGreen else OrangeFlame
+                        tint = if (state.hasRequiredPermissions) BrightGreen else OrangeFlame
                     )
                 }
 
@@ -208,6 +208,54 @@ fun SettingsScreen(
                     text = "Export Destination: Android Downloads / SamsungHealthExports",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Troubleshooting Card
+        Text(
+            text = "TROUBLESHOOTING: PAST WORKOUTS",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            letterSpacing = 1.sp
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(DarkCard)
+                .padding(16.dp)
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = SamsungBlue,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Why doesn't Health Connect show past workouts?",
+                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 15.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "• Samsung Health only syncs workouts recorded after Health Connect was first connected. Samsung Health does not backfill historical workouts.\n\n" +
+                            "• To export past workouts: In Samsung Health on your phone, go to Settings > 'Download personal data'. Download the ZIP archive and import it via the Import tab in this app.\n\n" +
+                            "• For workouts in Health Connect older than 30 days: Ensure 'Historical Data' permission is granted.",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 19.sp
                 )
             }
         }

@@ -1,6 +1,9 @@
 package com.samsunghealthexport.app.ui.screens
 
 import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,11 +23,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -58,10 +66,12 @@ import com.samsunghealthexport.app.model.ExerciseType
 import com.samsunghealthexport.app.model.ExportFormat
 import com.samsunghealthexport.app.model.WorkoutSession
 import com.samsunghealthexport.app.ui.components.WorkoutCard
+import com.samsunghealthexport.app.ui.theme.BrightGreen
 import com.samsunghealthexport.app.ui.theme.DarkBackground
 import com.samsunghealthexport.app.ui.theme.DarkCard
 import com.samsunghealthexport.app.ui.theme.OrangeFlame
 import com.samsunghealthexport.app.ui.theme.SamsungBlue
+import com.samsunghealthexport.app.ui.viewmodel.TimeRangeFilterOption
 import com.samsunghealthexport.app.ui.viewmodel.WorkoutsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +86,14 @@ fun WorkoutsListScreen(
 
     var selectedSessionForExport by remember { mutableStateOf<WorkoutSession?>(null) }
     var isExportMultiOpen by remember { mutableStateOf(false) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.importArchiveZip(uri)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -98,13 +116,29 @@ fun WorkoutsListScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "${state.filteredWorkouts.size} workouts extracted",
+                    text = "${state.filteredWorkouts.size} workouts found (${state.healthConnectCount} synced, ${state.archiveCount} imported)",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Quick import button
+                IconButton(
+                    onClick = { filePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(DarkCard, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.UploadFile,
+                        contentDescription = "Import Archive ZIP",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
                 IconButton(
                     onClick = { viewModel.loadHealthConnectWorkouts() },
                     modifier = Modifier
@@ -139,8 +173,8 @@ fun WorkoutsListScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Health Connect Permissions Banner if not connected
-        if (!state.hasPermissions) {
+        // Health Connect Permissions Banner if exercise reading is not permitted
+        if (!state.hasRequiredPermissions) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -159,13 +193,13 @@ fun WorkoutsListScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Connect Samsung Health",
+                            text = "Connect Samsung Health (Health Connect)",
                             style = MaterialTheme.typography.titleLarge.copy(fontSize = 15.sp),
                             fontWeight = FontWeight.Bold,
                             color = OrangeFlame
                         )
                         Text(
-                            text = "Grant Health Connect permissions to extract GPS routes, heart rate, and workouts.",
+                            text = "Tap to grant Health Connect permissions so your Samsung Health workouts can be extracted.",
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -173,7 +207,69 @@ fun WorkoutsListScreen(
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
+        } else if (!state.hasHistoryPermission && state.selectedTimeRange != TimeRangeFilterOption.DAYS_30) {
+            // Prompt for Historical Data permission to read beyond 30 days
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SamsungBlue.copy(alpha = 0.12f))
+                    .clickable { onRequestHealthConnectPermissions() }
+                    .padding(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = SamsungBlue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Access Workouts Older Than 30 Days",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = SamsungBlue
+                        )
+                        Text(
+                            text = "Health Connect requires 'Historical Data' permission to load previous workouts beyond 30 days. Tap here to grant.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
         }
+
+        // Time Range Filter Row
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = Icons.Default.DateRange,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(TimeRangeFilterOption.entries) { option ->
+                    FilterChip(
+                        selected = state.selectedTimeRange == option,
+                        onClick = { viewModel.setTimeRangeFilter(option) },
+                        label = { Text(option.label, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = SamsungBlue,
+                            selectedLabelColor = Color.White
+                        )
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Sport filter chips
         LazyRow(
@@ -184,10 +280,10 @@ fun WorkoutsListScreen(
                 FilterChip(
                     selected = state.selectedSportFilter == null,
                     onClick = { viewModel.setSportFilter(null) },
-                    label = { Text("All") },
+                    label = { Text("All Sports") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = SamsungBlue,
-                        selectedLabelColor = Color.White
+                        selectedContainerColor = BrightGreen,
+                        selectedLabelColor = Color.Black
                     )
                 )
             }
@@ -197,8 +293,8 @@ fun WorkoutsListScreen(
                     onClick = { viewModel.setSportFilter(if (state.selectedSportFilter == sport) null else sport) },
                     label = { Text(sport.displayName) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = SamsungBlue,
-                        selectedLabelColor = Color.White
+                        selectedContainerColor = BrightGreen,
+                        selectedLabelColor = Color.Black
                     )
                 )
             }
@@ -206,7 +302,7 @@ fun WorkoutsListScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Workouts List or Loading
+        // Workouts List or Empty / Guidance
         if (state.isLoading) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -218,7 +314,7 @@ fun WorkoutsListScreen(
                     CircularProgressIndicator(color = SamsungBlue)
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Extracting Samsung Health workout data...",
+                        text = "Searching Health Connect for previous workouts...",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -233,20 +329,58 @@ fun WorkoutsListScreen(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp)
+                    modifier = Modifier.padding(16.dp)
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.Archive,
+                        contentDescription = null,
+                        tint = SamsungBlue,
+                        modifier = Modifier.size(54.dp)
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = "No Workouts Found",
+                        text = "Why Are Previous Workouts Not Showing?",
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Ensure Samsung Health is synced with Health Connect, or import a personal data ZIP archive in the Import tab.",
+                        text = "1. Samsung Health only syncs new workouts recorded AFTER Health Connect was enabled. It does not automatically backfill your historical workouts.\n\n" +
+                                "2. To load your past workouts: Open Samsung Health > Settings > 'Download personal data'. Once downloaded, select your ZIP file below.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        lineHeight = 20.sp
                     )
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Button(
+                        onClick = {
+                            filePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SamsungBlue),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.UploadFile, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Import Samsung Health ZIP Archive", fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = { viewModel.loadHealthConnectWorkouts() },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Retry Health Connect Sync")
+                    }
                 }
             }
         } else {
@@ -254,6 +388,44 @@ fun WorkoutsListScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
+                // If workouts are found, but user might want older workouts not synced by Samsung Health
+                if (state.archiveCount == 0) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DarkCard)
+                                .clickable {
+                                    filePicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                                }
+                                .padding(12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.UploadFile,
+                                    contentDescription = null,
+                                    tint = SamsungBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Missing older workouts?",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Import past history from a Samsung Health personal data ZIP archive.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 items(state.filteredWorkouts, key = { it.id }) { session ->
                     WorkoutCard(
                         session = session,
